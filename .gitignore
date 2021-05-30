@@ -1,0 +1,25 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+*.bin
+
+# Sublime Text files
+*.sublime-project
+*.sublime-workspace
+
+# Python venv files
+Scripts/
+Lib/
+Include/
+pyvenv.cfg
+
+# related files
+libraries/
+homeassistant/
+backup/
+test/
+mqtt_listener/
+automation/www/html/updates/
+credentials.*
+*.old

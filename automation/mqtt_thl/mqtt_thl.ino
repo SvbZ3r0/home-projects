@@ -2,7 +2,6 @@
 #include <ESP8266WiFiMulti.h>
 #include <ESP8266WebServer.h>
 #include <PubSubClient.h>
-#include <ArduinoOTA.h>
 #include <DHT.h>
 #include <MCP3008.h>
 
@@ -15,7 +14,7 @@ const char *pswd = WIFI_PSWD;
 const char *mqtt_user = MQTT_USER;
 const char *mqtt_pswd = MQTT_PSWD;
 
-#define VERSION "nodemcu.thl_env v0.3"
+#define VERSION "nodemcu.thl_env v0.5"
 
 uint32_t time_since_update = -1;
 
@@ -65,35 +64,14 @@ void setup() {
   digitalWrite(LED_BUILTIN, HIGH);
 
   mqttClient.setServer(serverIPAddress, 1883);
-  mqttClient.setCallback(callback);
+  mqttClient.setCallback(mqttCallback);
 
   connectWifi(0);
 
-  ArduinoOTA.setHostname(host);
-
-  ArduinoOTA.onStart([]() {
-    Serial.println("Start");
-  });
-
-  ArduinoOTA.onEnd([]() {
-    Serial.println("\nEnd");
-  });
-
-  ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
-    Serial.printf("Progress: %u%%\r", (progress / (total / 100)));
-  });
-
-  ArduinoOTA.onError([](ota_error_t error) {
-    Serial.printf("Error[%u]: ", error);
-    if (error == OTA_AUTH_ERROR) Serial.println("Auth Failed");
-    else if (error == OTA_BEGIN_ERROR) Serial.println("Begin Failed");
-    else if (error == OTA_CONNECT_ERROR) Serial.println("Connect Failed");
-    else if (error == OTA_RECEIVE_ERROR) Serial.println("Receive Failed");
-    else if (error == OTA_END_ERROR) Serial.println("End Failed");
-  });
-
-  ArduinoOTA.begin();
-  Serial.println("OTA ready");
+  ESPhttpUpdate.onStart(onStart);
+  ESPhttpUpdate.onEnd(onEnd);
+  ESPhttpUpdate.onProgress(onProgress);
+  ESPhttpUpdate.onError(onError);
 
   checkforupdate();
   connectMQTT(0);
@@ -101,21 +79,32 @@ void setup() {
   dht.begin();
 }
 
+void onStart() {
+  Serial.println("Updating");
+}
+
+void onEnd() {
+  Serial.println("\nUpdate downloaded successfully");
+}
+
+void onProgress(unsigned int progress, unsigned int total) {
+  Serial.printf("Progress: %u%%\r\n", (progress / (total / 100)));
+}
+
+void onError(int err) {
+  Serial.printf("Couldn't update. Error: %d\n", err);
+}
+
 uint32_t previousTime = millis();
 
-void blink(int n, int t) {
-  t = 1000 * t / (300 + (n * 200));
-  if (t==0) t = 1;
-  for (int i=0; i<t; ++i) {
-    for (int j=0; j<n; ++j) {
-      digitalWrite(LED_BUILTIN, LOW);   // Turn the LED on (Note that LOW is the voltage level
-      // but actually the LED is on; this is because
-      // it is active low on the ESP-01)
-      delay(100);                      // Wait for a second
-      digitalWrite(LED_BUILTIN, HIGH);  // Turn the LED off by making the voltage HIGH
-      delay(100);
-    }
-    delay(300);
+void blink(int n) {
+  for (int i=0; i<n; ++i) {
+    digitalWrite(LED_BUILTIN, LOW);   // Turn the LED on (Note that LOW is the voltage level
+    // but actually the LED is on; this is because
+    // it is active low on the ESP-01)
+    delay(100);                      // Wait for a second
+    digitalWrite(LED_BUILTIN, HIGH);  // Turn the LED off by making the voltage HIGH
+    delay(100);
   }
 }
 
@@ -146,15 +135,14 @@ int connectWifi(int mode) {
     }
     else {
       Serial.print('.');
-      // blink(2, 0);
-      // delay(5000);
-      blink(2, 5);
+      blink(2);
+      delay(5000);
     }
   } while ((status != WL_CONNECTED) && (++ntry <= 10));
 
   if (ntry > 10) {
-    blink(2, 60);
-    // delay(60000);
+    blink(2);
+    delay(60000);
     status = connectWifi(1);
   }
   return status;
@@ -186,17 +174,16 @@ bool connectMQTT(int mode) {
     }
     else {
       Serial.print('.');
-      // blink(1, 0);
-      // delay(5000);
-      blink(1, 5);
+      blink(1);
+      delay(5000);
     }
   } while (!status && (++ntry <= 10));
 
   if (ntry > 10) {
     Serial.printf("\nMQTT connection failed, state %d, retrying...\n", mqttClient.state());
     connectWifi(2);
-    blink(1, 30);
-    // delay(30000);
+    blink(1);
+    delay(30000);
     status = connectMQTT(1);
   }
 
@@ -220,7 +207,7 @@ void pubMQTT(char *names[], float vals[]) {
 }
 
 
-void callback(char *msgTopic, byte *msgPayload, unsigned int msgLength) {
+void mqttCallback(char *msgTopic, byte *msgPayload, unsigned int msgLength) {
   // copy payload to a static string
   static char message[MAX_MSG_LEN + 1];
   if (msgLength > MAX_MSG_LEN) {
@@ -245,7 +232,7 @@ void checkforupdate() {
       Serial.print(ESPhttpUpdate.getLastError());
       Serial.print(" : ");
       Serial.println(ESPhttpUpdate.getLastErrorString().c_str());
-      time_since_update = millis() - 85800000;  // check again in 10 minutes
+      time_since_update = millis() - 85800000;  // check again in 10 minutes (86400000 - 600000)
       break;
     case HTTP_UPDATE_NO_UPDATES:
       Serial.println("[update] No update available.");
@@ -256,16 +243,18 @@ void checkforupdate() {
   }
   if (ret != HTTP_UPDATE_FAILED) {
     time_since_update = millis();
-    if (ret != HTTP_UPDATE_NO_UPDATES) ESP.restart();
+    if (ret != HTTP_UPDATE_NO_UPDATES) {
+      delay(1000);
+      ESP.restart();
+    }
   }
 }
 
 void loop() {
   digitalWrite(LED_BUILTIN, HIGH);
   if (connectWifi(2) == WL_CONNECTED) {
-    ArduinoOTA.handle();
+    if (digitalRead(update_pin) == 0) checkforupdate();
     if (connectMQTT(2)) {
-      if (digitalRead(update_pin) == 0) checkforupdate();
       temperature = dht.readTemperature(); // Gets the values of the temperature
       humidity = dht.readHumidity(); // Gets the values of the humidity
       heatIndex = dht.computeHeatIndex(temperature, humidity, false); // Gets Heat Index | false for Celcius
